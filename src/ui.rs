@@ -12,14 +12,14 @@ fn draw(state: &mut UiState) {
     clear_background(WHITE);
 
     let loss = *state.loss.last().unwrap_or(&-1.);
-    let epoch = state.loss.len();
 
     let ui = &mut root_ui();
 
     ui.label(None, &format!("FPS: {}", get_fps()));
     ui.checkbox(hash!(), "Pause", &mut state.pause);
     ui.slider(hash!(), "Rate", 0.000001..3.0, &mut state.rate);
-    ui.label(None, &format!("Epoch: {}", epoch));
+    ui.slider(hash!(), "Img", 0.0..1.0, &mut state.slider);
+    ui.label(None, &format!("Epoch: {}", state.epoch));
     ui.label(None, &format!("Loss: {}", loss));
 
     'out: {
@@ -63,19 +63,19 @@ fn draw(state: &mut UiState) {
     
     if !state.img.is_empty() {
         let buf: Vec<u8> = state.img.iter().map(|v| {
-            let v = (v * 255.).clamp(0., 255.) as u8;
+            let v = ((1. - v) * 255.).clamp(0., 255.) as u8;
             [v, v, v, 255]
         }).flatten().collect();
 
-        let texture = Texture2D::from_rgba8(32, 32, &buf);
+        let texture = Texture2D::from_rgba8(state.size.0 as u16, state.size.1 as u16, &buf);
         texture.set_filter(FilterMode::Nearest);
         
         let dp = DrawTextureParams { 
-            dest_size: Some(vec2(128., 128.)),
+            dest_size: Some(vec2(256., 256.)),
             ..Default::default()
         };
 
-        draw_texture_ex(&texture, 400., 50., WHITE, dp);
+        draw_texture_ex(&texture, 400., 100., WHITE, dp);
     }
 }
 

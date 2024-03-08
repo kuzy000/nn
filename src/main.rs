@@ -14,7 +14,7 @@ use burn::tensor::backend::{AutodiffBackend, Backend};
 
 use burn::tensor::{Data, Shape, Tensor};
 use image::{DynamicImage, GrayImage, ImageBuffer, Luma};
-use itertools::Itertools;
+use itertools::{concat, Itertools};
 use ui::ui_main;
 use ui_state::UiState;
 
@@ -24,7 +24,6 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 struct Model<B: Backend> {
     ln: Vec<Linear<B>>,
 }
-
 
 impl<B: Backend> Model<B> {
     fn new(arch: &[usize], device: &B::Device) -> Result<Self> {
@@ -42,7 +41,7 @@ impl<B: Backend> Model<B> {
         let mut xs = input.clone();
         for l in &self.ln {
             //xs = l.forward(&xs.tanh()?)?;
-            xs =  relu(l.forward(xs));
+            xs = relu(l.forward(xs));
         }
         //xs.clamp(0., 1.)
         //sigmoid(xs)
@@ -94,10 +93,36 @@ fn try_main() -> Result<()> {
     // let device = burn::backend::libtorch::LibTorchDevice::Cuda(0);
     // main_backend::<burn::backend::Autodiff<burn::backend::LibTorch>>(device)
 
-    let device = burn::backend::ndarray::NdArrayDevice::Cpu;
-    main_backend::<burn::backend::Autodiff<burn::backend::NdArray>>(device)
+    // let device = burn::backend::ndarray::NdArrayDevice::Cpu;
+    // main_backend::<burn::backend::Autodiff<burn::backend::NdArray>>(device)
+
+    let device = burn::backend::wgpu::WgpuDevice::default();
+    main_backend::<burn::backend::Autodiff<burn::backend::Wgpu>>(device)
 }
 
+fn img(s: &str) -> Result<(Vec<f32>, u32, u32)> {
+    let image = image::io::Reader::open(s)?.decode()?;
+    let image = image.grayscale().to_luma32f();
+    let w = image.width();
+    let h = image.height();
+    let image = image.to_vec().iter().map(|x| 1. - x).collect();
+
+    Ok((image, w, h))
+}
+
+fn make_coords(w: u32, h: u32, third: f32, offset: f32) -> Vec<f32> {
+    (0..h)
+        .cartesian_product(0..w)
+        .map(|(y, x)| {
+            [
+                -offset + (y as f32 / (h - 1) as f32) * (1. + offset * 2.),
+                -offset + (x as f32 / (w - 1) as f32) * (1. + offset * 2.),
+                third,
+            ]
+        })
+        .flatten()
+        .collect()
+}
 
 fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Result<()> {
     let ui_state = Arc::new(Mutex::new(UiState::new()));
@@ -106,18 +131,32 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
         thread::spawn(move || ui_main(s));
     }
 
-    let image = image::io::Reader::open("2.png")?.decode()?;
-    let image = image.grayscale().to_luma32f();
-    let w = image.width();
-    let h = image.height();
-    
-    let image = image.to_vec().iter().map(|x| 1. - x).collect();
+    let (image0, w, h) = img("f0.png")?;
+    let (image1, _, _) = img("f2.png")?;
 
-    let coords: Vec<f32> = (0..h)
-        .cartesian_product(0..w)
-        .map(|(y, x)| [(y as f32 / (h - 1) as f32), (x as f32 / (w - 1) as f32)])
-        .flatten()
-        .collect();
+    let coords0 = make_coords(w, h, 0., 0.);
+    let coords1 = make_coords(w, h, 1., 0.);
+
+    let coords = {
+        let mut t = coords0.clone();
+        t.append(&mut coords1.clone());
+        t
+    };
+    let image = {
+        let mut t = image0.clone();
+        t.append(&mut image1.clone());
+        t
+    };
+
+    //println!("{:?}", coords);
+
+    // for i in (0..coords.len()).step_by(3) {
+    //     let a = coords[i + 0];
+    //     let b = coords[i + 1];
+    //     let c = coords[i + 2];
+
+    //     println!("{a:.3} {b:.3} {c:.3}");
+    // }
 
     // let tw = 256;
     // let th = 256;
@@ -127,21 +166,30 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
     //     .map(|(y, x)| [(y as f32 / th as f32) * 2. - 1., (x as f32 / tw as f32) * 2. - 1.])
     //     .flatten()
     //     .collect();
-    
-    let ti = Tensor::<B, 2>::from_floats(Data::new(coords, Shape::new([(w * h) as usize, 2])), &device);
+
+    assert_eq!(coords.len(), (w * h * 2 * 3) as usize);
+    let ti = Tensor::<B, 2>::from_floats(
+        Data::new(coords, Shape::new([(w * h * 2) as usize, 3])),
+        &device,
+    );
     // let ti = Tensor::from_vec(coords, ((w * h) as usize, 2), &device)?.to_dtype(candle_core::DType::F16)?;
 
-    let to = Tensor::<B, 2>::from_floats(Data::new(image, Shape::new([(w * h) as usize, 1])), &device);
+    assert_eq!(image.len(), (w * h * 2) as usize);
+    let to = Tensor::<B, 2>::from_floats(
+        Data::new(image, Shape::new([(w * h * 2) as usize, 1])),
+        &device,
+    );
     // let to = Tensor::from_slice(&image, ((w * h) as usize, 1), &device)?.to_dtype(candle_core::DType::F16)?;
 
     // let tt = Tensor::<B, 2>::from_floats(Data::new(coords_th, Shape::new([(tw * th) as usize, 2])), &device);
     //let tt = Tensor::from_vec(coords_th, ((tw * th) as usize, 2), &device)?.to_dtype(candle_core::DType::F16)?;
 
-    let mut model = Model::new(&[2, 20, 20, 20, 1], &device)?;
+    // let mut model = Model::new(&[2, 20, 20, 20, 1], &device)?;
+    let mut model = Model::new(&[3, 100, 100, 100, 1], &device)?;
 
     ui_state.lock().unwrap().rate = 0.005;
     //let mut sgd = SGD::new(varmap.all_vars(), ui_state.lock().unwrap().rate as f64)?;
-    
+
     let sdg_config = SgdConfig::new();
     let mut sgd = sdg_config.init();
 
@@ -151,13 +199,13 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
 
         let grads = loss.backward();
         let grads = GradientsParams::from_grads(grads, &model);
-        
+
         model = sgd.step(ui_state.lock().unwrap().rate as f64, model, grads);
-        
-        // if i % 5 != 0 {
-        //     continue;
-        // }
-        
+
+        if i % 2 != 0 {
+            continue;
+        }
+
         // if i % 1000 == 0 {
         //     let tf = model.forward(&tt)?;
         //     let res: Vec<f32> = tf.squeeze(1)?.to_dtype(candle_core::DType::F32)?.to_vec1()?;
@@ -175,8 +223,24 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
 
         ui_state.lock().unwrap().loss.push(loss);
 
-        let res = f.to_data().value;
-        ui_state.lock().as_mut().unwrap().img = res;
+        {
+            let w = w * 4;
+            let h = h * 4;
+            ui_state.lock().as_mut().unwrap().size = (w, h);
+
+            let slider = ui_state.lock().unwrap().slider;
+            let c = make_coords(w, h, slider, 0.1);
+            let ti = Tensor::<B, 2>::from_floats(
+                Data::new(c, Shape::new([(w * h) as usize, 3])),
+                &device,
+            );
+            let f = model.forward(ti.clone());
+
+            let res = f.to_data().value;
+            ui_state.lock().as_mut().unwrap().img = res;
+        }
+
+        ui_state.lock().as_mut().unwrap().epoch = i;
 
         while ui_state.lock().unwrap().pause {
             std::thread::sleep(Duration::from_secs_f32(1. / 60.));

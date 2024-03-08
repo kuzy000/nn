@@ -6,6 +6,9 @@ pub struct UiState {
     pub loss: Vec<f32>,
     pub img: Vec<f32>,
     pub rate: f32,
+    pub slider: f32,
+    pub epoch: i32,
+    pub size: (u32, u32)
 }
 
 impl UiState {
@@ -16,6 +19,9 @@ impl UiState {
             loss: Vec::new(),
             img: Vec::new(),
             rate: 0.05,
+            slider: 0.,
+            epoch: -1,
+            size: (32, 32),
         }
     }
 }
