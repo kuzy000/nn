@@ -1,0 +1,93 @@
+use macroquad::{
+    prelude::*,
+    ui::{hash, root_ui},
+};
+
+use std::sync::{Arc, Mutex};
+
+use crate::ui_state;
+use ui_state::UiState;
+
+fn draw(state: &mut UiState) {
+    clear_background(WHITE);
+
+    let loss = *state.loss.last().unwrap_or(&-1.);
+    let epoch = state.loss.len();
+
+    let ui = &mut root_ui();
+
+    ui.label(None, &format!("FPS: {}", get_fps()));
+    ui.checkbox(hash!(), "Pause", &mut state.pause);
+    ui.slider(hash!(), "Rate", 0.000001..3.0, &mut state.rate);
+    ui.label(None, &format!("Epoch: {}", epoch));
+    ui.label(None, &format!("Loss: {}", loss));
+
+    'out: {
+        let s = vec2(300., 300.);
+        let mut canvas = ui.canvas();
+        let p = canvas.request_space(s);
+
+        canvas.rect(Rect::new(p.x, p.y, s.x, s.y), BLACK, None);
+
+        let max = *state
+            .loss
+            .iter()
+            .max_by(|x, y| x.partial_cmp(y).unwrap())
+            .unwrap_or(&0.);
+
+        if state.loss.len() < 2 {
+            break 'out;
+        }
+
+        let num = state.loss.len().min(200);
+
+        for i in 0..num - 1 {
+            let xa = (i + 0) as f32 / (num - 1) as f32;
+            let xb = (i + 1) as f32 / (num - 1) as f32;
+            
+            let factor = state.loss.len() as f32 / num as f32;
+            
+            let ia = ((i + 0) as f32 * factor) as usize;
+            let ib = ((i + 1) as f32 * factor) as usize;
+
+            let ya = state.loss.get(ia).unwrap();
+            let yb = state.loss.get(ib).unwrap();
+
+            canvas.line(
+                p + vec2(xa, 1. - ya / max) * s,
+                p + vec2(xb, 1. - yb / max) * s,
+                BLACK,
+            );
+        }
+    };
+    
+    if !state.img.is_empty() {
+        let buf: Vec<u8> = state.img.iter().map(|v| {
+            let v = (v * 255.).clamp(0., 255.) as u8;
+            [v, v, v, 255]
+        }).flatten().collect();
+
+        let texture = Texture2D::from_rgba8(32, 32, &buf);
+        texture.set_filter(FilterMode::Nearest);
+        
+        let dp = DrawTextureParams { 
+            dest_size: Some(vec2(128., 128.)),
+            ..Default::default()
+        };
+
+        draw_texture_ex(&texture, 400., 50., WHITE, dp);
+    }
+}
+
+async fn async_ui_main(ui_state: Arc<Mutex<UiState>>) -> Result<(), macroquad::Error> {
+    loop {
+        draw(ui_state.lock().as_mut().unwrap());
+        next_frame().await
+    }
+}
+
+pub fn ui_main(ui_state: Arc<Mutex<UiState>>) {
+    macroquad::Window::new("nn", async {
+        async_ui_main(ui_state).await.unwrap();
+    });
+}
