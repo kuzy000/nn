@@ -12,7 +12,7 @@ use burn::optim::{GradientsParams, Optimizer, SgdConfig};
 use burn::tensor::activation::{relu, sigmoid};
 use burn::tensor::backend::{AutodiffBackend, Backend};
 
-use burn::tensor::{Data, Shape, Tensor};
+use burn::tensor::{Data, ElementConversion, Shape, Tensor};
 use image::{DynamicImage, GrayImage, ImageBuffer, Luma};
 use itertools::{concat, Itertools};
 use ui::ui_main;
@@ -23,6 +23,11 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Module, Debug)]
 struct Model<B: Backend> {
     ln: Vec<Linear<B>>,
+}
+
+pub fn leaky_relu<const D: usize, B: Backend, E: ElementConversion>(tensor: Tensor<B, D>, slope: E) -> Tensor<B, D> {
+    let leak = tensor.clone().clamp_min(0.).mul_scalar(slope);
+    tensor.clamp_min(0.) + leak
 }
 
 impl<B: Backend> Model<B> {
@@ -38,14 +43,17 @@ impl<B: Backend> Model<B> {
     }
 
     fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
+        let slope = 0.1;
+
         let mut xs = input.clone();
-        for l in &self.ln {
-            //xs = l.forward(&xs.tanh()?)?;
-            xs = relu(l.forward(xs));
+        for i in (0..&self.ln.len() - 1) {
+            let l = &self.ln[i];
+            xs = leaky_relu(l.forward(xs), slope);
         }
-        //xs.clamp(0., 1.)
-        //sigmoid(xs)
-        xs.clamp(0., 1.)
+        let l = &self.ln.last().unwrap();
+        xs = sigmoid(l.forward(xs));
+
+        xs
     }
 }
 
@@ -110,13 +118,17 @@ fn img(s: &str) -> Result<(Vec<f32>, u32, u32)> {
     Ok((image, w, h))
 }
 
+fn map_range(a0: f32, b0: f32, a1: f32, b1: f32, v: f32) -> f32 {
+    a1 + (v - a0) / (b0 - a0) * (b1 - a1)
+}
+
 fn make_coords(w: u32, h: u32, third: f32, offset: f32) -> Vec<f32> {
     (0..h)
         .cartesian_product(0..w)
         .map(|(y, x)| {
             [
-                -offset + (y as f32 / (h - 1) as f32) * (1. + offset * 2.),
-                -offset + (x as f32 / (w - 1) as f32) * (1. + offset * 2.),
+                map_range(0., (h - 1) as f32, -1. - offset, 1. + offset, y as f32),
+                map_range(0., (w - 1) as f32, -1. - offset, 1. + offset, x as f32),
                 third,
             ]
         })
@@ -185,9 +197,9 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
     //let tt = Tensor::from_vec(coords_th, ((tw * th) as usize, 2), &device)?.to_dtype(candle_core::DType::F16)?;
 
     // let mut model = Model::new(&[2, 20, 20, 20, 1], &device)?;
-    let mut model = Model::new(&[3, 100, 100, 100, 1], &device)?;
+    let mut model = Model::new(&[3, 512, 512, 512, 1], &device)?;
 
-    ui_state.lock().unwrap().rate = 0.005;
+    ui_state.lock().unwrap().rate = 0.01;
     //let mut sgd = SGD::new(varmap.all_vars(), ui_state.lock().unwrap().rate as f64)?;
 
     let sdg_config = SgdConfig::new();
