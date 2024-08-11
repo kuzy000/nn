@@ -186,8 +186,8 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
         thread::spawn(move || ui_main(s));
     }
 
-    let (image0, w, h) = img_yuv("furby.png")?;
-    let (image1, _, _) = img_yuv("furby2.png")?;
+    let (image0, w, h) = img_yuv("data/furby.png")?;
+    let (image1, _, _) = img_yuv("data/furby2.png")?;
 
     let coords0 = make_coords(w, h, 0., 0.);
     let coords1 = make_coords(w, h, 1., 0.);
@@ -203,25 +203,6 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
         t
     };
 
-    //println!("{:?}", coords);
-
-    // for i in (0..coords.len()).step_by(3) {
-    //     let a = coords[i + 0];
-    //     let b = coords[i + 1];
-    //     let c = coords[i + 2];
-
-    //     println!("{a:.3} {b:.3} {c:.3}");
-    // }
-
-    // let tw = 256;
-    // let th = 256;
-
-    // let coords_th: Vec<f32> = (0..th)
-    //     .cartesian_product(0..tw)
-    //     .map(|(y, x)| [(y as f32 / th as f32) * 2. - 1., (x as f32 / tw as f32) * 2. - 1.])
-    //     .flatten()
-    //     .collect();
-
     assert_eq!(coords.len(), (w * h * 2 * 3) as usize);
     let ti = Tensor::<B, 2>::from_floats(
         Data::new(coords, Shape::new([(w * h * 2) as usize, 3])),
@@ -234,12 +215,7 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
         Data::new(image, Shape::new([(w * h * 2) as usize, 3])),
         &device,
     );
-    // let to = Tensor::from_slice(&image, ((w * h) as usize, 1), &device)?.to_dtype(candle_core::DType::F16)?;
 
-    // let tt = Tensor::<B, 2>::from_floats(Data::new(coords_th, Shape::new([(tw * th) as usize, 2])), &device);
-    //let tt = Tensor::from_vec(coords_th, ((tw * th) as usize, 2), &device)?.to_dtype(candle_core::DType::F16)?;
-
-    // let mut model = Model::new(&[2, 20, 20, 20, 1], &device)?;
     let mut model = Model::new(&[3, 200, 200, 200, 200, 200, 3], &device)?;
 
     ui_state.lock().unwrap().rate = 0.001;
@@ -261,21 +237,7 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
 
             model = opt.step(ui_state.lock().unwrap().rate as f64, model, grads);
 
-
-            // if i % 1000 == 0 {
-            //     let tf = model.forward(&tt)?;
-            //     let res: Vec<f32> = tf.squeeze(1)?.to_dtype(candle_core::DType::F32)?.to_vec1()?;
-            //     let res = res.iter().map(|x| (x * 255.) as u8).collect::<Vec<u8>>();
-
-            //     let image: GrayImage = ImageBuffer::from_raw(tw, th, res).unwrap();
-            //     image.save("out.png")?;
-            // }
-
             let loss = loss.into_scalar();
-
-            // sgd.set_learning_rate((ui_state.lock().unwrap().rate / loss) as f64);
-
-            // assert!(!loss.is_nan());
 
             ui_state.lock().unwrap().loss.push(loss);
             ui_state.lock().as_mut().unwrap().epoch = i;
@@ -302,7 +264,6 @@ fn main_backend<B: AutodiffBackend<FloatElem = f32>>(device: B::Device) -> Resul
         if ui_state.lock().unwrap().pause {
             std::thread::sleep(Duration::from_millis(2));
         }
-        //std::thread::sleep(Duration::from_secs_f32(0.01));
     }
 
     Ok(())
